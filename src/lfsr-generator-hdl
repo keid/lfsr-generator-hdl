@@ -191,6 +191,57 @@ sub set_getoptlong_result
 
 package main;
 
+sub generate_exor_statement
+{
+    my $input_name = shift;
+    my $offset = shift;
+    my $taps = shift;
+    my @bit_str;
+    foreach (@$taps) {
+	push(@bit_str, $input_name."[".($_-$offset)."]");
+    }
+    return join "^", @bit_str
+}
+
+sub generate_function_name
+{
+    my $length = shift;
+    my $shamts = shift;
+    my $type = shift;
+    my $taps = shift;
+    
+    return join "_T", ("lfsr_".$type."_L"."$length"."_SA"."$shamts", @$taps);
+}
+
+sub generate_single_function_description
+{
+    my $length = shift;
+    my $shamts = shift;
+    my $type = shift;
+    my $taps = shift;
+    
+    my $func_name;
+    $func_name = generate_function_name($length, $shamts, $type, $taps);
+    
+    my @statements;
+    push (@statements, $func_name."[".($length-1-$shamts).":0]");
+    foreach (0..($shamts-1)) {
+	push (@statements, generate_exor_statement("in", $_, $taps));
+    }
+        
+    print "function [".($length-1).":0] ".$func_name.";\n";
+    print "input [".($length-1).":0] in;\n";
+    print "begin\n";
+    print $func_name." = { ".join(", ", @statements)." };\n";
+    print "end\n";
+    print "endfunction\n";
+}
+
+sub generate_shift_lfsr_function($)
+{
+    
+}
+
 use strict;
 use Getopt::Long;
 
@@ -239,4 +290,9 @@ use Getopt::Long;
     }
     $paramset->set_getoptlong_result(\%h)
 			or exit(1);
+
+    # generate_shift_lfsr_function($paramset);
+    generate_single_function_description(32, 4, "fib", [31, 20] );
+    
 }
+0;
