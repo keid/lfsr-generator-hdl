@@ -1,0 +1,242 @@
+#! /usr/bin/perl -w
+
+# ----------------------------------------------------------------------------
+# "THE BEER-WARE LICENSE" (Revision 42):
+# <dohi@pca.cis.nagasaki-u.ac.jp> wrote this file. As long as you retain this notice you
+# can do whatever you want with this stuff. If we meet some day, and you think
+# this stuff is worth it, you can buy me a beer in return Keisuke DOHI.
+# ----------------------------------------------------------------------------
+
+package PackageInfo;
+
+use strict;
+
+my $package_name = 'lfsr-generator-hdl' ;
+my $package_version = '0.0.1' ;
+my $package_description = ' A hdl generator for LFSRs.' ;
+my $package_url = 'http://github.com/keid/lfsr-generator-hdl/' ;
+
+sub show_help($)
+{
+	my $me = shift;
+	print << "__EOS__";
+$package_name: $package_description
+
+usage: $me [options]
+
+Startup:
+  -h, --help     show this help.
+  -V, --version  show the version.
+
+LFSR options:
+  --config=STRING       set the configuration: \`fibonacci\' or \`galois\'.
+  --length=NUMBER       set the length.
+  --shift-amounts=LIST  comma-separated list of shift amounts.
+  --taps=LIST           comma-separated list of tap sequences.
+  --shift-left          set the direction of shifting to left.
+
+Code options:
+  none
+
+Other options:
+  --no-auto      disable auto-correcting of settings.
+
+See $package_url for more details.
+__EOS__
+}
+
+sub show_version()
+{
+	print << "__EOS__";
+$package_name $package_version
+__EOS__
+}
+
+
+################################################
+
+package ParameterSet;
+
+use strict;
+use Carp;
+
+sub new
+{
+    my %valid_type = map { ( $_ => 1 ) }
+    qw(bool integer string enum numeric_list string_list);
+    my $class = shift;
+    return if ((scalar(@_) % 2) != 0);
+    my $self = bless {}, $class;
+    while (@_) {
+	my ($key, $list) = splice(@_, 0, 2);
+	return if (ref $list ne 'ARRAY' || scalar(@$list) < 2);
+	my $type = shift @$list;
+	return if (!exists $valid_type{$type});
+	my $value = pop @$list;
+	if ($type eq 'enum') {
+	    return if (scalar(@$list) < 1);
+	    my $valid_values = shift @$list;
+	    return if (ref $valid_values ne 'ARRAY');
+	    $self->{$key} = [ $type, [ @$valid_values ], undef ];
+	} else {
+	    $self->{$key} = [ $type, undef ];
+	}
+	return if (scalar(@$list) != 0);
+	$self->set($key, $value) or return;
+    }
+    $self;
+}
+
+sub set
+{
+    my ($self, $key, $value) = @_;
+    return if (!exists $self->{$key});
+    my $list = $self->{$key};
+    my $type = $list->[0];
+    $list->[-1] = do {
+	if ($type eq 'bool') {
+	    !!$value;
+	} elsif ($type eq 'integer') {
+	    return if ($value !~ /^\d+$/);
+	    $value;
+	} elsif ($type eq 'string') {
+	    "$value";
+	} elsif ($type eq 'enum') {
+	    my $valid_values = $list->[1];
+	    $value = "$value";
+	    return if (!exists { map { ($_ => 1) } @$valid_values }->{$value});
+	    $value;
+	} elsif ($type eq 'numeric_list') {
+	    return if (ref $value ne 'ARRAY');
+	    foreach (@$value) { return if ($_ !~ /^\d+$/); }
+	    [ @$value ];
+	} elsif ($type eq 'string_list') {
+	    return if (ref $value ne 'ARRAY');
+	    $_ = "$_" for (@$value);
+	    [ @$value ];
+	} else {
+	    croak 'internal error';
+	}
+    };
+    1;
+}
+
+sub keys
+{
+    CORE::keys %{+shift};
+}
+
+sub get
+{
+    my ($self, $key) = @_;
+    return if (!defined $key || !exists $self->{$key});
+    my $value = $self->{$key}->[-1];
+    (ref $value eq 'ARRAY') ? @$value : $value;
+}
+
+sub get_getoptlong_args
+{
+    my $self = shift;
+    map {
+	my $key = $_;
+	my $type = $self->{$key}->[0];
+	$key . (($type eq 'bool') ? '!' : (($type eq 'integer') ? '=i' : '=s'));
+    } CORE::keys %$self;
+}
+
+sub set_getoptlong_result
+{
+    my ($self, $tbl) = @_;
+    foreach my $key (sort(CORE::keys %$self)) {
+	next if (!exists $tbl->{$key});
+	my $list = $self->{$key};
+	my $type = $list->[0];
+	my $value = $tbl->{$key};
+	$list->[-1] = do {
+	    if ($type eq 'bool') {
+		!!$value;
+	    } elsif ($type eq 'integer') {
+		if ($value < 0) {
+		    carp qq|non-negative number is required |,
+		    qq|for option `$key'.\n|;
+		    return;
+		}
+		$value;
+	    } elsif ($type eq 'string') {
+		$value;
+	    } elsif ($type eq 'enum') {
+		my $valid_values = $list->[1];
+		if (!exists { map { ($_ => 1) } @$valid_values }->{$value}) {
+		    carp qq|invalid argument for option `$key'.\n|;
+		    return;
+		}
+		$value;
+	    } elsif ($type eq 'numeric_list') {
+		if ($value !~ /^\d+(,\d+)*$/) {
+		    carp qq|invalid argument for option `$key'.\n|;
+		    return;
+		}
+		[ split /,/, $value ];
+	    } elsif ($type eq 'string_list') {
+		[ split /,/, $value ];
+	    } else {
+		croak 'internal error';
+	    }
+	};
+    }
+    1;
+}
+
+################################################
+
+package main;
+
+use strict;
+use Getopt::Long;
+
+{
+    (my $myname = $0) =~ s|.*/||;
+    my $paramset = new ParameterSet(
+	#
+	# LFSR options
+	'config'        => [ 'enum', [ 'fibonacci', 'galois' ], 'fibonacci' ],
+	'length'        => [ 'integer',      0     ],
+	'shift-amounts' => [ 'numeric_list', [ 1 ] ],
+	'shift-left'    => [ 'bool',         undef ],
+	'taps'          => [ 'numeric_list', []    ],
+	# #
+	# # Code options
+	# 'language'           => [ 'enum', [ 'c', 'c++' ], 'c' ],
+	# 'extern-c-guard'     => [ 'bool',        1              ],
+	# 'function-name'      => [ 'string',      'shift_lfsr'   ],
+	# 'function-qualifier' => [ 'string',      ''             ],
+	# 'function-template'  => [ 'bool',        undef          ],
+	# 'includes'           => [ 'string_list', []             ],
+	# 'include-guard'      => [ 'bool',        undef          ],
+	# 'namespace'          => [ 'string',      ''             ],
+	# 'prototype'          => [ 'bool',        undef          ],
+	# 'variable-type'      => [ 'string',      'unsigned int' ],
+	);
+
+
+    my %h = ('auto' => 1);
+    GetOptions(\%h,
+	       $paramset->get_getoptlong_args(),
+	       'help|h!', 'version|V!', 'auto!', 'shift-right!')
+	or exit(1);
+    $h{help} = 1 if (
+	!$h{'version'} &&
+	!((exists $h{'length'} && $h{'length'} >= 1) && exists $h{'taps'})
+	);
+
+    if ($h{'help'}) {
+	PackageInfo::show_help($myname);
+	exit(0);
+    }
+    if ($h{'version'}) {
+	PackageInfo::show_version();
+	exit(0);
+    }
+    $paramset->set_getoptlong_result(\%h)
+			or exit(1);
+}
