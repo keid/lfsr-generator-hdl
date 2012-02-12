@@ -191,6 +191,8 @@ sub set_getoptlong_result
 
 package main;
 
+use List::Util qw(sum);
+
 sub generate_exor_statement
 {
     my $input_name = shift;
@@ -220,26 +222,68 @@ sub generate_single_function_description
     my $type = shift;
     my $taps = shift;
     
-    my $func_name;
-    $func_name = generate_function_name($length, $shamts, $type, $taps);
+    my $func_name = generate_function_name($length, $shamts, $type, $taps);
     
     my @statements;
     push (@statements, $func_name."[".($length-1-$shamts).":0]");
     foreach (0..($shamts-1)) {
 	push (@statements, generate_exor_statement("in", $_, $taps));
     }
-        
+    
     print "function [".($length-1).":0] ".$func_name.";\n";
-    print "input [".($length-1).":0] in;\n";
-    print "begin\n";
-    print $func_name." = { ".join(", ", @statements)." };\n";
-    print "end\n";
-    print "endfunction\n";
+    print "\t"."input [".($length-1).":0] in;\n";
+    print "\t"."begin\n";
+    print "\t\t".$func_name." = { ".join(", ", @statements)." };"."\n";
+    print "\t"."end"."\n";
+    print "endfunction"."\n";
 }
 
-sub generate_shift_lfsr_function($)
+sub generate_function_description
 {
+
+    my $paramset = shift;
+
+    my $length = $paramset->get('length');
+    my @shamts = $paramset->get('shift-amounts');
+    my $type = "fib";
+    my @taps = $paramset->get('taps');
+
+    my $shamts_total = sum @shamts;
+    my $func_name = generate_function_name($length, $shamts_total, $type, \@taps);
+    my $n_shmats = scalar @shamts;
     
+    if (scalar @shamts > 1) {
+	my @tmp_vars;
+	foreach (1..$n_shmats) {
+	    push (@tmp_vars, "tmp".$_);
+	}
+
+	my @in_vars = ("in", @tmp_vars);
+	my @out_vars = (@tmp_vars, $func_name);
+	
+	print "function [".($length-1).":0] ".$func_name.";"."\n";
+	print "input [".($length-1).":0] in;"."\n";
+	
+	foreach (@tmp_vars) {
+	    print "reg [".($length-1).":0] ".$_.";"."\n";
+	}
+	
+	print "begin"."\n";
+	
+	foreach (@shamts) {
+	    print shift @out_vars;
+	    print "=";
+	    print generate_function_name($length, $_, $type, \@taps)."(".(shift @in_vars).");\n";
+	}
+	print $func_name." = "."tmp".$n_shmats.";"."\n";
+	print "end\n";
+	print "endfunction"."\n"."\n";
+    } 
+
+    foreach (@shamts) {
+	generate_single_function_description($length, $_, $type, \@taps);
+	print "\n";
+    }
 }
 
 use strict;
@@ -292,7 +336,6 @@ use Getopt::Long;
 			or exit(1);
 
     # generate_shift_lfsr_function($paramset);
-    generate_single_function_description(32, 4, "fib", [31, 20] );
-    
+    generate_function_description( $paramset );
 }
 0;
