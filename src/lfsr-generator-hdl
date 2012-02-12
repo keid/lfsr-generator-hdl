@@ -225,7 +225,7 @@ sub generate_single_function_description
     my $func_name = generate_function_name($length, $shamts, $type, $taps);
     
     my @statements;
-    push (@statements, $func_name."[".($length-1-$shamts).":0]");
+    push (@statements, "in[".($length-1-$shamts).":0]");
     foreach (0..($shamts-1)) {
 	push (@statements, generate_exor_statement("in", $_, $taps));
     }
